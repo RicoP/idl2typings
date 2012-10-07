@@ -1,39 +1,65 @@
 "use strict"; 
 
-var useDefine = false; 
-
-var WebIDLParser = require("./webidlparser.js").Parser; 
-var fs = require("fs"); 
-
-var idl, out, module, webGlContext, constants, finalObject, i, json, m, args, obj, isSequence;
-
-process.argv.forEach(function (val, index, array) {
-	if(val === "-d") {
-		useDefine = true; 
-	}
-}); 
-
-idl = fs.readFileSync("webgl.idl").toString();
-module = WebIDLParser.parse(idl)[0]; 
-
-var defs = module.definitions; 
-
-var interfaces = defs.filter(function(def) { return def.type === "interface"; }); 
-
 function print() { 
 	var args = Array.prototype.slice.call(arguments, 0); 
 	process.stdout.write(args.join(""));
 }
 
-printInterfaces( interfaces ); 
+function whitespace() {
+	print("\t"); 
+}
 
-function printInterfaces(interfaces) {
-	for(var i = 0; i !== interfaces.length; i++) {
-		var interf = interfaces[i]; 
-		printInterface(interf); 
+
+function readTypedefs(typedefs) {
+	var touples = typedefs.map(function(td) {
+		//typedef unsigned long GLenum -> ["GLenum", "unsigned long"]
+		return [td.name, td.idlType.idlType]; 
+	});
+
+	var ret = Object.create(null); 
+	touples.forEach(function(t) { 
+		ret[t[0]] = t[1]; 
+	});
+
+	return ret; 
+};
+
+function mapIdlTypeToTSType(typedefs, name) {
+	if(typedefs[name]) {
+		return mapIdlTypeToTSType(typedefs, typedefs[name]); 
 	}
 
-	function printInterface(interf) {
+	switch(name) {
+		case "boolean": 
+		return "bool"; 
+
+		case "unsigned long": 
+		case "byte": 
+		case "short": 
+		case "long": 
+		case "long long": 
+		case "unsigned byte": 
+		case "unsigned short": 
+		case "unsigned int": 
+		case "float": 
+		return "number"; 
+
+		case "DOMString": 
+		return "string"; 
+
+		case "FloatArray": 
+		return "Float32Array"; 
+
+		case "object":
+		return "any"; 
+
+		default: 
+		return name;
+	}
+}
+
+function printInterfaces(interfaces, typedefs) {
+	interfaces.forEach(function (interf) {
 		var hasInheritance = interf.inheritance !== ""; 
 
 		print("interface "); 
@@ -47,70 +73,100 @@ function printInterfaces(interfaces) {
 			print(" extends ", interf.inheritance[0]); 
 		}
 
-		print("{\n"); 
+		print(" {\n"); 
 
 		printMembers(interf.members); 
 
 		print("}\n\n"); 
 
 		function printMembers(members) {
-			printAttributes(members.filter(function(member) { return member.type === "attribute"; })); 
-			printConstants(members.filter(function(member) { return member.type === "const"; })); 
+			function getTSType(idlType) {
+				if(typeof idlType === "string") return mapIdlTypeToTSType(typedefs, idlType); 
 
-
-			function toJSType(idlType) {
-				function getName(name) { 
-					switch(name) {
-						case "bool": case "boolean": case "GLboolean": 
-						return "bool"; 
-
-						case "GLenum": case "GLbitfield": case "GLbyte": case "GLshort": 
-						case "GLint":  case "GLsize": case "GLintptr": case "GLsizeptr": 
-						case "GLubyte": case "GLushort": case "GLuint": case "GLfloat": 
-						case "GLclampf": case "unsigned long": case "byte": case "short":  
-						case "long": case "unsigned byte": case "unsigned short": case "unsigned int": 
-						return "number"; 
-
-						case "DOMString": 
-						return "string"; 
-
-						case "FloatArray": 
-						return "Float32Array"; 
-
-						default: 
-						return name;
-					}
-				}
-
-				print(getName(idlType.idlType)); 
+				var name = getTSType(idlType.idlType);
 				if(idlType.sequence || idlType.array) {
-					print("[]"); 
+					return name + "[]"; 
 				}
+				return name; 
 			}
 
-			function printAttributes(members) {
+			function printTSType(idlType) {
+				print(getTSType(idlType)); 
+			}
+
+			function printMembers(members) {
 				members.forEach(function (member) { 
-					var type = member.idlType; 
+					var type = member.idlType || member.type; 
 
-					print("  "); 
+					whitespace(); 
 					print(member.name, " : "); 
-					toJSType(type); 
+					printTSType(type); 
 					print(";\n"); 
-
 				});
 			}
-			
-			function printConstants(members) {
-				members.forEach(function (member) { 
-					var type = member.idlType; 
 
-					print("  "); 
-					print(member.name, " : "); 
-					toJSType(type); 
+			function printOperations(ops) {
+				"use strict"; 
+				ops.forEach(function(op) {
+					whitespace(); 
+					print(op.name, "("); 					
+					print(op.arguments.map(function(arg) {
+						return arg.name + 
+							" : " + 
+							getTSType(arg.type); 
+					}).join(", "));
+					print(") : "); 			
+					print(getTSType(op.idlType)); 
 					print(";\n"); 
-
-				});
+				}); 
 			}
+
+			var constants  = members.filter(function(member) { return member.type === "const"; }); 
+			var attributes = members.filter(function(member) { return member.type === "attribute"; }); 
+			var operations = members.filter(function(member) { return member.type === "operation"; });
+			var dicAttributes = members.filter(function(member) { return !!member.type.idlType; });
+
+			printMembers(constants);    
+			printMembers(attributes);
+			printMembers(dicAttributes);
+			printOperations(operations); 
 		}
-	}
+	});
 }
+
+function printModuleMember(module) { 
+	if(!module.length) return; 
+
+	var typedefs = readTypedefs(module.filter(function(token) { return token.type === "typedef"; }));
+
+	var dictionaries = module.filter(function(def) { return def.type === "dictionary"; }); 
+	var interfaces   = module.filter(function(def) { return def.type === "interface"; }); 
+	var submodules   = module.filter(function(def) { return def.type === "module"; }); 
+
+	printInterfaces(dictionaries, typedefs); 
+	printInterfaces(interfaces, typedefs); 
+	printModuleMember(submodules); 
+}
+
+(function() { 
+	var WebIDLParser = require("./webidlparser.js").Parser; 
+	var fs = require("fs"); 
+
+	var idl, out, module, webGlContext, constants, finalObject, i, json, m, args, obj, isSequence;
+
+	if(!process.argv[2]) {
+		console.error("No Filename."); 
+		return; 
+	}
+
+	idl = fs.readFileSync(process.argv[2]).toString();
+	module = WebIDLParser.parse(idl); 
+
+	if(module.type === "module") {
+		printModuleMember(module.definitions); 
+	}
+	else {
+		printModuleMember(module[0]); 
+	}
+	
+}()); 

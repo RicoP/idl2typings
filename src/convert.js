@@ -1,5 +1,12 @@
 "use strict"; 
 
+
+process.on('uncaughtException', function(err) {
+  console.error(JSON.stringify(err));
+});
+
+
+
 function print() { 
 	var args = Array.prototype.slice.call(arguments, 0); 
 	process.stdout.write(args.join(""));
@@ -9,8 +16,17 @@ function whitespace() {
 	print("\t"); 
 }
 
+function isNonEmptyArray(obj) {
+	return !!obj.length; 
+}
 
 function readTypedefs(typedefs) {
+	function getNamespaceObject(namespace) {
+		//foo::bar => bar
+		var touple = namespace.split(/::/); 
+		return touple[ touple.length - 1 ]; 
+	}
+
 	var touples = typedefs.map(function(td) {
 		//typedef unsigned long GLenum -> ["GLenum", "unsigned long"]
 		return [td.name, td.idlType.idlType]; 
@@ -18,7 +34,10 @@ function readTypedefs(typedefs) {
 
 	var ret = Object.create(null); 
 	touples.forEach(function(t) { 
-		ret[t[0]] = t[1]; 
+		var from = t[0]; 
+		var to   = getNamespaceObject(t[1]); 
+		if(from !== to)
+			ret[from] = to; 
 	});
 
 	return ret; 
@@ -135,17 +154,17 @@ function printInterfaces(interfaces, typedefs) {
 }
 
 function printModuleMember(module) { 
-	if(!module.length) return; 
+	if(isNonEmptyArray(module)) { 
+		var typedefs = readTypedefs(module.filter(function(token) { return token.type === "typedef"; }));
 
-	var typedefs = readTypedefs(module.filter(function(token) { return token.type === "typedef"; }));
+		var dictionaries = module.filter(function(def) { return def.type === "dictionary"; }); 
+		var interfaces   = module.filter(function(def) { return def.type === "interface"; }); 
+		var submodules   = module.filter(function(def) { return def.type === "module"; }); 
 
-	var dictionaries = module.filter(function(def) { return def.type === "dictionary"; }); 
-	var interfaces   = module.filter(function(def) { return def.type === "interface"; }); 
-	var submodules   = module.filter(function(def) { return def.type === "module"; }); 
-
-	printInterfaces(dictionaries, typedefs); 
-	printInterfaces(interfaces, typedefs); 
-	printModuleMember(submodules); 
+		printInterfaces(dictionaries, typedefs); 
+		printInterfaces(interfaces, typedefs); 
+		printModuleMember(submodules);
+	}	
 }
 
 (function() { 
@@ -166,7 +185,6 @@ function printModuleMember(module) {
 		printModuleMember(module.definitions); 
 	}
 	else {
-		printModuleMember(module[0]); 
+		printModuleMember(module[0].definitions); 
 	}
-	
 }()); 

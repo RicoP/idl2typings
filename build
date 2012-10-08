@@ -1,2 +1,3 @@
 #!/bin/sh
-node src/convert.js webgl.idl > webgl.d.ts
+node src/convert.js idl/webgl.idl > d.ts/webgl.d.ts
+cat d.ts/extend.d.ts >> d.ts/webgl.d.ts

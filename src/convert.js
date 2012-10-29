@@ -94,7 +94,29 @@ function printInterfaces(interfaces, typedefs) {
 
 		print(" {\n"); 
 
-		printMembers(interf.members); 
+		if(Object.keys(interf.members).length === 0) {
+			//issue #1: Interfaces without members are considered "the same", 
+			//so add an unsued fake member to make interfaces unique
+			//example: 
+			//
+			//  interface WebGLBuffer : WebGLObject {
+			//  };
+			//
+			//becomes
+			//
+			//  interface WebGLBuffer extends WebGLObject {
+			//      $__dummyprop__WebGLBuffer : any; 
+			//  };
+			var dummymember = {
+				"type" : "attribute", 
+				"name" : "$__dummyprop__" + interf.name, 
+				"idlType" : "any" 
+			}; 
+			printMembers([dummymember]); 
+		}
+		else { 
+			printMembers(interf.members); 
+		} 
 
 		print("}\n\n"); 
 

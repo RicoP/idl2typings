@@ -95,22 +95,18 @@ function getTSType(idlType, typedefs) {
 
 function getArgs(args, typedefs) {
 	return args.map(function(arg) {
-		var parameterType = "", comment = "";
+		var parameterType = "";
 		
 		if (arg.idlType.union) {
-			comment += "/* (";
-			comment += arg.idlType.idlType.map(function (idlType) {
-				return idlType.idlType;
-			}).join(" or ");
-			comment += ")";
-			if (arg.variadic) comment += "..."; 
-			comment += " */ ";
-			parameterType += "any";
+			parameterType +=
+				"(" +
+				arg.idlType.idlType.map(function (idlType) { return getTSType(idlType.idlType, typedefs); }).join(" | ") +
+				")";
 		} else {
 			parameterType += getTSType(arg.idlType.idlType, typedefs);
 		}
 		if (arg.variadic) parameterType += "[]";
-		return comment + (arg.variadic ? "..." : "") + arg.name + ": " + parameterType; 					
+		return (arg.variadic ? "..." : "") + arg.name + ": " + parameterType;
 	}).join(", ");	
 }
 

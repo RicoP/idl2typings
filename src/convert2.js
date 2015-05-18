@@ -177,24 +177,7 @@ function printInterfaces(interfaces, typedefs) {
 						print(op.name); 											
 					}
 					print("("); 					
-					print(op.arguments.map(function(arg) {
-						var parameterType = "", comment = "";
-						
-						if (arg.idlType.union) {
-							comment += "/* (";
-							comment += arg.idlType.idlType.map(function (idlType) {
-								return idlType.idlType;
-							}).join(" or ");
-							comment += ")";
-							if (arg.variadic) comment += "..."; 
-							comment += " */ ";
-							parameterType += "any";
-						} else {
-							parameterType += getTSType(arg.idlType.idlType, typedefs);
-						}
-						if (arg.variadic) parameterType += "[]";
-						return comment + (arg.variadic ? "..." : "") + arg.name + ": " + parameterType; 					
-					}).join(", "));
+					print(getArgs(op.arguments, typedefs));
 					print("): "); 			
 					print(getTSType(op.idlType, typedefs)); 
 					print(";\n"); 

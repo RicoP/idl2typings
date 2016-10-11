@@ -1,3 +1,4 @@
+/// <reference path="../../typings/node/node.d.ts"/>
 "use strict"; 
 
 
@@ -50,17 +51,22 @@ function mapIdlTypeToTSType(typedefs, name) {
 
 	switch(name) {
 		case "boolean": 
-		return "bool"; 
+		return "boolean"; 
 
 		case "unsigned long": 
 		case "byte": 
+		case "octet": 
 		case "short": 
 		case "long": 
 		case "long long": 
 		case "unsigned byte": 
 		case "unsigned short": 
 		case "unsigned int": 
-		case "float": 
+		case "float":
+		case "unrestricted float":
+		case "double":
+		case "unrestricted double":
+		case "DOMTimeStamp": 
 		return "number"; 
 
 		case "DOMString": 
@@ -77,19 +83,41 @@ function mapIdlTypeToTSType(typedefs, name) {
 	}
 }
 
+function getTSType(idlType, typedefs) {
+	if(typeof idlType === "string") return mapIdlTypeToTSType(typedefs, idlType); 
+
+	var name = getTSType(idlType.idlType, typedefs);
+	if(idlType.sequence || idlType.array) {
+		return name + "[]"; 
+	}
+	return name; 
+}
+
+function getArgs(args, typedefs) {
+	return args.map(function(arg) {
+		var parameterType = "";
+		
+		if (arg.idlType.union) {
+			parameterType +=
+				"(" +
+				arg.idlType.idlType.map(function (idlType) { return getTSType(idlType.idlType, typedefs); }).join(" | ") +
+				")";
+		} else {
+			parameterType += getTSType(arg.idlType.idlType, typedefs);
+		}
+		if (arg.variadic) parameterType += "[]";
+		return (arg.variadic ? "..." : "") + arg.name + ": " + parameterType;
+	}).join(", ");	
+}
+
 function printInterfaces(interfaces, typedefs) {
 	interfaces.forEach(function (interf) {
-		var hasInheritance = interf.inheritance !== ""; 
 
 		print("interface "); 
 		print(interf.name); 
 
-		if(hasInheritance) {
-			if(interf.inheritance.length !== 1) {
-				throw new Error("more than one inheritance." + interf.inheritance); 
-			}
-
-			print(" extends ", interf.inheritance[0]); 
+		if(interf.inheritance !== null) {
+			print(" extends ", interf.inheritance); 
 		}
 
 		print(" {\n"); 
@@ -121,18 +149,8 @@ function printInterfaces(interfaces, typedefs) {
 		print("}\n\n"); 
 
 		function printMembers(members) {
-			function getTSType(idlType) {
-				if(typeof idlType === "string") return mapIdlTypeToTSType(typedefs, idlType); 
-
-				var name = getTSType(idlType.idlType);
-				if(idlType.sequence || idlType.array) {
-					return name + "[]"; 
-				}
-				return name; 
-			}
-
 			function printTSType(idlType) {
-				print(getTSType(idlType)); 
+				print(getTSType(idlType, typedefs)); 
 			}
 
 			function printMembers(members) {
@@ -140,38 +158,59 @@ function printInterfaces(interfaces, typedefs) {
 					var type = member.idlType || member.type; 
 
 					whitespace(); 
-					print(member.name, " : "); 
+					print(member.name, ": "); 
 					printTSType(type); 
 					print(";\n"); 
 				});
 			}
 
 			function printOperations(ops) {
-				"use strict"; 
+				"use strict";
+				
 				ops.forEach(function(op) {
 					whitespace(); 
-					print(op.name, "("); 					
-					print(op.arguments.map(function(arg) {
-						return arg.name + 
-							" : " + 
-							getTSType(arg.type); 
-					}).join(", "));
-					print(") : "); 			
-					print(getTSType(op.idlType)); 
+					if (interf.type !== "callback interface") {
+						print(op.name); 											
+					}
+					print("("); 					
+					print(getArgs(op.arguments, typedefs));
+					print("): "); 			
+					print(getTSType(op.idlType, typedefs)); 
 					print(";\n"); 
 				}); 
 			}
-
+			
 			var constants  = members.filter(function(member) { return member.type === "const"; }); 
 			var attributes = members.filter(function(member) { return member.type === "attribute"; }); 
-			var operations = members.filter(function(member) { return member.type === "operation"; });
-			var dicAttributes = members.filter(function(member) { return !!member.type.idlType; });
+			var operations = members.filter(function(member) { return member.type === "operation" && !member.stringifier; });
+			var dicAttributes = members.filter(function(member) { return member.type === "field"; });
 
 			printMembers(constants);    
 			printMembers(attributes);
 			printMembers(dicAttributes);
-			printOperations(operations); 
+			printOperations(operations);
 		}
+	});
+}
+
+function printImplements(impls) {
+	impls.forEach(function (impl) {
+		//print("/*", JSON.stringify(impl), "*/\n");
+		print("interface "); 
+		print(impl.target); 
+		print(" extends "); 
+		print(impl.implements); 
+		print(" {\n}\n\n"); 
+	});
+}
+
+function printCallbacks(callbacks, typedefs) {
+	callbacks.forEach(function (callback) {
+		//print("/*", JSON.stringify(callback), "*/\n");
+		print("interface ", callback.name, " {\n");
+		whitespace(); 
+		print("(", getArgs(callback.arguments, typedefs),"): " + getTSType(callback.idlType.idlType, typedefs) + ";\n"); 
+		print("}\n"); 
 	});
 }
 
@@ -180,20 +219,24 @@ function printModuleMember(module) {
 		var typedefs = readTypedefs(module.filter(function(token) { return token.type === "typedef"; }));
 
 		var dictionaries = module.filter(function(def) { return def.type === "dictionary"; }); 
-		var interfaces   = module.filter(function(def) { return def.type === "interface"; }); 
+		var interfaces   = module.filter(function(def) { return def.type === "interface" || def.type === "callback interface"; }); 
 		var submodules   = module.filter(function(def) { return def.type === "module"; }); 
+		var impls        = module.filter(function(def) { return def.type === "implements"; });
+		var callbacks    = module.filter(function(def) { return def.type === "callback"; });
 
 		printInterfaces(dictionaries, typedefs); 
 		printInterfaces(interfaces, typedefs); 
+		printImplements(impls);
 		printModuleMember(submodules);
+		printCallbacks(callbacks, typedefs);
 	}	
 }
 
-(function() { 
-	var WebIDLParser = require("./webidlparser.js").Parser; 
+(function() {
+	var WebIDL2 = require("webidl2");
 	var fs = require("fs"); 
 
-	var idl, out, module, webGlContext, constants, finalObject, i, json, m, args, obj, isSequence;
+	var idl, module;
 
 	if(!process.argv[2]) {
 		console.error("No Filename."); 
@@ -201,12 +244,7 @@ function printModuleMember(module) {
 	}
 
 	idl = fs.readFileSync(process.argv[2]).toString();
-	module = WebIDLParser.parse(idl); 
-
-	if(module.type === "module") {
-		printModuleMember(module.definitions); 
-	}
-	else {
-		printModuleMember(module[0].definitions); 
-	}
+	module = WebIDL2.parse(idl);
+//	print(JSON.stringify(module)); 
+	printModuleMember(module); 
 }()); 
